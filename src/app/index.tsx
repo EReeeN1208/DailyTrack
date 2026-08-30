@@ -1,9 +1,14 @@
-import { Text, View, StyleSheet } from "react-native";
+import { Button, Text, View, StyleSheet } from "react-native";
+
+import { useAuth } from "@/context/auth";
 
 export default function Index() {
+  const { session, signOut } = useAuth();
+
   return (
     <View style={styles.container}>
-      <Text>Edit src/app/index.tsx to edit this screen.</Text>
+      <Text>Signed in as {session?.user.email}</Text>
+      <Button title="Sign out" onPress={() => signOut()} />
     </View>
   );
 }
@@ -13,5 +18,6 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    gap: 16,
   },
 });
