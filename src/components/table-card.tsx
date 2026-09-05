@@ -56,11 +56,13 @@ function formatClockTime(ms: number): string {
 }
 
 export function TableCard({
+  userId,
   table,
   record,
   recordCount,
   onMutate,
 }: {
+  userId: string;
   table: TableRow;
   record: TableRecord | null;
   recordCount: number;
@@ -75,7 +77,7 @@ export function TableCard({
   // real row exists — so the user can start adding data immediately. The
   // draft is purely client-side; getOrCreateCurrentRecord only creates the
   // real row on the first actual mutation below.
-  const displayRecord = current ?? (isDaily ? draftRecord(table, record) : null);
+  const displayRecord = current ?? (isDaily ? draftRecord(table) : null);
 
   const anyRunning = !!displayRecord?.timer_state?.some((entry) => entry.running);
   useTicker(anyRunning);
@@ -84,7 +86,7 @@ export function TableCard({
     if (isBusy) return;
     setIsBusy(true);
     try {
-      const base = await getOrCreateCurrentRecord(table, record);
+      const base = await getOrCreateCurrentRecord(userId, table, record);
       const updated = await fn(base);
       onMutate(table.table_id, updated);
     } catch (err) {
@@ -102,7 +104,7 @@ export function TableCard({
     }
     setIsBusy(true);
     try {
-      const ensured = await getOrCreateCurrentRecord(table, record);
+      const ensured = await getOrCreateCurrentRecord(userId, table, record);
       onMutate(table.table_id, ensured);
       router.push(`/table/${table.table_id}/record/${ensured.record_id}`);
     } catch (err) {
@@ -116,7 +118,7 @@ export function TableCard({
     if (isBusy) return;
     setIsBusy(true);
     try {
-      const created = await createNewRecord(table, record);
+      const created = await createNewRecord(userId, table);
       onMutate(table.table_id, created);
       router.push(`/table/${table.table_id}/record/${created.record_id}`);
     } catch (err) {
@@ -156,14 +158,14 @@ export function TableCard({
         onOpenRecord={openRecord}
         onCreateRecord={createRecord}
         onIncrement={(entryIndex, delta) =>
-          runMutation((rec) => incrementEntry(rec, entryIndex, delta))
+          runMutation((rec) => incrementEntry(userId, rec, entryIndex, delta))
         }
         onToggleTimestamp={(entryIndex) =>
-          runMutation((rec) => toggleTimestampEntry(rec, entryIndex))
+          runMutation((rec) => toggleTimestampEntry(userId, rec, entryIndex))
         }
-        onStartTimer={(entryIndex) => runMutation((rec) => startTimerEntry(rec, entryIndex))}
-        onStopTimer={(entryIndex) => runMutation((rec) => stopTimerEntry(rec, entryIndex))}
-        onResetTimer={(entryIndex) => runMutation((rec) => resetTimerEntry(rec, entryIndex))}
+        onStartTimer={(entryIndex) => runMutation((rec) => startTimerEntry(userId, rec, entryIndex))}
+        onStopTimer={(entryIndex) => runMutation((rec) => stopTimerEntry(userId, rec, entryIndex))}
+        onResetTimer={(entryIndex) => runMutation((rec) => resetTimerEntry(userId, rec, entryIndex))}
       />
     </View>
   );

@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Stack, router, useFocusEffect } from "expo-router";
 
+import { useAuth } from "@/context/auth";
 import { readCache, writeCache } from "@/lib/cache";
 import {
   createTable,
@@ -121,6 +122,8 @@ function ChoiceChips<T extends string>({
 }
 
 export default function CreateTable() {
+  const { session } = useAuth();
+  const userId = session?.user.id;
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
 
@@ -263,6 +266,7 @@ export default function CreateTable() {
       setFormError("Please fill in all required fields.");
       return;
     }
+    if (!userId) return;
 
     const lock = incrementalLock(entryType);
     const trimmedNames = entryNames.slice(0, parsedCount).map((n) => n.trim());
@@ -274,7 +278,7 @@ export default function CreateTable() {
     setFormError(null);
     setIsSubmitting(true);
     try {
-      await createTable({
+      await createTable(userId, {
         table_name: trimmedName,
         entry_type: entryType!,
         entry_unit: entryType === "duration" || !entryUnit.trim() ? null : entryUnit.trim(),
@@ -303,51 +307,51 @@ export default function CreateTable() {
       <Stack.Screen
         options={{
           title: "New Table",
-          headerLeft: () => (
-            <Pressable onPress={() => router.back()} hitSlop={8}>
-              <Text style={styles.headerButtonText}>Cancel</Text>
-            </Pressable>
-          ),
-          headerRight: () => (
-            <Pressable
-              onPress={handleCreate}
-              disabled={isSubmitting || isLoadingOptions}
-              hitSlop={8}
-            >
-              <Text
-                style={[
-                  styles.headerButtonText,
-                  styles.headerButtonStrong,
-                  (isSubmitting || isLoadingOptions) && styles.headerButtonDisabled,
-                ]}
+          ...(Platform.OS !== "ios" && {
+            headerLeft: () => (
+              <Pressable onPress={() => router.back()} hitSlop={8}>
+                <Text style={styles.headerButtonText}>Cancel</Text>
+              </Pressable>
+            ),
+            headerRight: () => (
+              <Pressable
+                onPress={handleCreate}
+                disabled={isSubmitting || isLoadingOptions}
+                hitSlop={8}
               >
-                Create
-              </Text>
-            </Pressable>
-          ),
-          unstable_headerLeftItems: () => [
-            {
-              type: "button",
-              label: "Cancel",
-              variant: "plain",
-              hidesSharedBackground: true,
-              tintColor: "#208AEF",
-              onPress: () => router.back(),
-            },
-          ],
-          unstable_headerRightItems: () => [
-            {
-              type: "button",
-              label: "Create",
-              variant: "plain",
-              hidesSharedBackground: true,
-              tintColor: "#208AEF",
-              disabled: isSubmitting || isLoadingOptions,
-              onPress: () => handleCreate(),
-            },
-          ],
+                <Text
+                  style={[
+                    styles.headerButtonText,
+                    styles.headerButtonStrong,
+                    (isSubmitting || isLoadingOptions) && styles.headerButtonDisabled,
+                  ]}
+                >
+                  Create
+                </Text>
+              </Pressable>
+            ),
+          }),
         }}
       />
+      {Platform.OS === "ios" && (
+        <>
+          <Stack.Toolbar placement="left">
+            <Stack.Toolbar.Button variant="plain" tintColor="#208AEF" onPress={() => router.back()}>
+              Cancel
+            </Stack.Toolbar.Button>
+          </Stack.Toolbar>
+          <Stack.Toolbar placement="right">
+            <Stack.Toolbar.Button
+              variant="plain"
+              tintColor="#208AEF"
+              disabled={isSubmitting || isLoadingOptions}
+              onPress={() => handleCreate()}
+            >
+              Create
+            </Stack.Toolbar.Button>
+          </Stack.Toolbar>
+        </>
+      )}
 
       {isLoadingOptions ? (
         <View style={styles.centered}>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,7 +12,9 @@ import {
 } from "react-native";
 import { Stack, router, useFocusEffect, useLocalSearchParams } from "expo-router";
 
+import { useAuth } from "@/context/auth";
 import {
+  deleteRecord,
   fetchRecord,
   formatDuration,
   incrementEntry,
@@ -23,6 +26,8 @@ import {
   type TableRecord,
   type TimerEntryState,
 } from "@/lib/entries";
+import { getLocalRecord, getLocalTable } from "@/lib/localStore";
+import { flushOutbox } from "@/lib/sync";
 import { fetchTable, getEntryLabel, type TableRow } from "@/lib/tables";
 
 function parseEntryValue(
@@ -71,6 +76,8 @@ function EntryField({ label, children }: { label: string; children: React.ReactN
 
 export default function RecordEdit() {
   const { id, recordId } = useLocalSearchParams<{ id: string; recordId: string }>();
+  const { session } = useAuth();
+  const userId = session?.user.id;
 
   const [table, setTable] = useState<TableRow | null>(null);
   const [record, setRecord] = useState<TableRecord | null>(null);
@@ -82,23 +89,45 @@ export default function RecordEdit() {
   const anyRunning = !!record?.timer_state?.some((entry) => entry.running);
   useTicker(anyRunning);
 
+  const applyRecord = (freshRecord: TableRecord) => {
+    setRecord(freshRecord);
+    setTextValues(freshRecord.data.map((v) => (v == null ? "" : String(v))));
+  };
+
   const load = useCallback(async () => {
-    if (!id || !recordId) return;
+    if (!id || !recordId || !userId) return;
+    const numericRecordId = Number(recordId);
     try {
-      const [freshTable, freshRecord] = await Promise.all([
-        fetchTable(id),
-        fetchRecord(Number(recordId)),
+      // Instant paint from whatever's already known locally.
+      const [localTable, localRecord] = await Promise.all([
+        getLocalTable(userId, id),
+        getLocalRecord(userId, numericRecordId),
       ]);
-      setTable(freshTable);
-      setRecord(freshRecord);
-      setTextValues(freshRecord.data.map((v) => (v == null ? "" : String(v))));
+      if (localTable) setTable(localTable);
+      if (localRecord) {
+        applyRecord(localRecord);
+        setIsLoading(false);
+      }
+
+      await flushOutbox(userId);
+      await Promise.all([fetchTable(userId, id), fetchRecord(userId, numericRecordId)]);
+
+      // Re-read from the local store rather than the raw fetch results —
+      // fetchTable/fetchRecord skip overwriting a row with an unsynced local
+      // edit pending, so the local store is the correct LWW-resolved view.
+      const [reconciledTable, reconciledRecord] = await Promise.all([
+        getLocalTable(userId, id),
+        getLocalRecord(userId, numericRecordId),
+      ]);
+      if (reconciledTable) setTable(reconciledTable);
+      if (reconciledRecord) applyRecord(reconciledRecord);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load record");
     } finally {
       setIsLoading(false);
     }
-  }, [id, recordId]);
+  }, [id, recordId, userId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -107,7 +136,7 @@ export default function RecordEdit() {
   );
 
   const handleTextBlur = async (entryIndex: number) => {
-    if (!record || !table) return;
+    if (!record || !table || !userId) return;
     const raw = textValues[entryIndex] ?? "";
     const { value, valid } = parseEntryValue(table.entry_type, raw);
     if (!valid) {
@@ -123,20 +152,25 @@ export default function RecordEdit() {
 
     if (value === record.data[entryIndex]) return;
     try {
-      const updated = await setEntryValue(record, entryIndex, value);
+      const updated = await setEntryValue(userId, record, entryIndex, value);
       setRecord(updated);
     } catch (err) {
       reportError(err);
     }
   };
 
-  // The native "Done" header button (unstable_headerRightItems) lives outside
-  // React Native's own responder tree, so tapping it doesn't reliably blur a
+  // The native "Done" header button (Stack.Toolbar) lives outside React
+  // Native's own responder tree, so tapping it doesn't reliably blur a
   // focused TextInput first — the per-field onBlur save can be skipped
   // entirely. Flush any unsaved text/numerical edits here before navigating
   // back, so Done always persists what's on screen regardless of blur timing.
   const handleDone = async () => {
-    if (!record || !table || (table.entry_type !== "string" && table.entry_type !== "numerical")) {
+    if (
+      !record ||
+      !table ||
+      !userId ||
+      (table.entry_type !== "string" && table.entry_type !== "numerical")
+    ) {
       router.back();
       return;
     }
@@ -145,7 +179,7 @@ export default function RecordEdit() {
       for (let entryIndex = 0; entryIndex < textValues.length; entryIndex++) {
         const { value, valid } = parseEntryValue(table.entry_type, textValues[entryIndex] ?? "");
         if (!valid || value === current.data[entryIndex]) continue;
-        current = await setEntryValue(current, entryIndex, value);
+        current = await setEntryValue(userId, current, entryIndex, value);
       }
       if (current !== record) setRecord(current);
     } catch (err) {
@@ -156,10 +190,10 @@ export default function RecordEdit() {
   };
 
   const handleIncrement = async (entryIndex: number, delta: number) => {
-    if (!record || isBusy) return;
+    if (!record || !userId || isBusy) return;
     setIsBusy(true);
     try {
-      const updated = await incrementEntry(record, entryIndex, delta);
+      const updated = await incrementEntry(userId, record, entryIndex, delta);
       setRecord(updated);
       setTextValues((prev) => {
         const next = [...prev];
@@ -174,10 +208,10 @@ export default function RecordEdit() {
   };
 
   const handleToggleTimestamp = async (entryIndex: number) => {
-    if (!record || isBusy) return;
+    if (!record || !userId || isBusy) return;
     setIsBusy(true);
     try {
-      const updated = await toggleTimestampEntry(record, entryIndex);
+      const updated = await toggleTimestampEntry(userId, record, entryIndex);
       setRecord(updated);
     } catch (err) {
       reportError(err);
@@ -187,10 +221,10 @@ export default function RecordEdit() {
   };
 
   const handleStartTimer = async (entryIndex: number) => {
-    if (!record || isBusy) return;
+    if (!record || !userId || isBusy) return;
     setIsBusy(true);
     try {
-      const updated = await startTimerEntry(record, entryIndex);
+      const updated = await startTimerEntry(userId, record, entryIndex);
       setRecord(updated);
     } catch (err) {
       reportError(err);
@@ -200,10 +234,10 @@ export default function RecordEdit() {
   };
 
   const handleStopTimer = async (entryIndex: number) => {
-    if (!record || isBusy) return;
+    if (!record || !userId || isBusy) return;
     setIsBusy(true);
     try {
-      const updated = await stopTimerEntry(record, entryIndex);
+      const updated = await stopTimerEntry(userId, record, entryIndex);
       setRecord(updated);
     } catch (err) {
       reportError(err);
@@ -213,16 +247,35 @@ export default function RecordEdit() {
   };
 
   const handleResetTimer = async (entryIndex: number) => {
-    if (!record || isBusy) return;
+    if (!record || !userId || isBusy) return;
     setIsBusy(true);
     try {
-      const updated = await resetTimerEntry(record, entryIndex);
+      const updated = await resetTimerEntry(userId, record, entryIndex);
       setRecord(updated);
     } catch (err) {
       reportError(err);
     } finally {
       setIsBusy(false);
     }
+  };
+
+  const handleDelete = () => {
+    if (!record || !userId) return;
+    Alert.alert("Delete record", "This can't be undone.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await deleteRecord(userId, record.record_id);
+            router.back();
+          } catch (err) {
+            reportError(err);
+          }
+        },
+      },
+    ]);
   };
 
   if (isLoading) {
@@ -249,23 +302,22 @@ export default function RecordEdit() {
       <Stack.Screen
         options={{
           title: table.table_name ?? "Record",
-          headerRight: () => (
-            <Pressable onPress={handleDone} hitSlop={8}>
-              <Text style={[styles.headerButtonText, styles.headerButtonStrong]}>Done</Text>
-            </Pressable>
-          ),
-          unstable_headerRightItems: () => [
-            {
-              type: "button",
-              label: "Done",
-              variant: "plain",
-              hidesSharedBackground: true,
-              tintColor: "#208AEF",
-              onPress: () => handleDone(),
-            },
-          ],
+          ...(Platform.OS !== "ios" && {
+            headerRight: () => (
+              <Pressable onPress={handleDone} hitSlop={8}>
+                <Text style={[styles.headerButtonText, styles.headerButtonStrong]}>Done</Text>
+              </Pressable>
+            ),
+          }),
         }}
       />
+      {Platform.OS === "ios" && (
+        <Stack.Toolbar placement="right">
+          <Stack.Toolbar.Button variant="plain" tintColor="#208AEF" onPress={() => handleDone()}>
+            Done
+          </Stack.Toolbar.Button>
+        </Stack.Toolbar>
+      )}
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         {entryIndexes.map((entryIndex) => {
           const label = count > 1 ? getEntryLabel(table, entryIndex) : "Value";
@@ -378,6 +430,10 @@ export default function RecordEdit() {
 
           return null;
         })}
+
+        <Pressable onPress={handleDelete} style={styles.deleteButton}>
+          <Text style={styles.deleteButtonText}>Delete record</Text>
+        </Pressable>
       </ScrollView>
     </View>
   );
@@ -452,4 +508,6 @@ const styles = StyleSheet.create({
   tickButtonActive: { backgroundColor: "#208AEF" },
   tickButtonText: { fontSize: 15, fontWeight: "600" },
   tickButtonTextActive: { color: "#FFFFFF" },
+  deleteButton: { marginTop: 16, alignItems: "center", paddingVertical: 12 },
+  deleteButtonText: { fontSize: 16, color: "#FF3B30", fontWeight: "600" },
 });

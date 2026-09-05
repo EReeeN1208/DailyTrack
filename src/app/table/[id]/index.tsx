@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,7 +13,10 @@ import {
 } from "react-native";
 import { Stack, router, useFocusEffect, useLocalSearchParams } from "expo-router";
 
+import { useAuth } from "@/context/auth";
 import { formatDuration, fetchRecords, createNewRecord, type TableRecord } from "@/lib/entries";
+import { getLocalRecords, getLocalTable } from "@/lib/localStore";
+import { flushOutbox } from "@/lib/sync";
 import {
   deleteTable,
   fetchTable,
@@ -73,6 +77,8 @@ function Section({ label, children }: { label: string; children: React.ReactNode
 
 export default function TableMenu() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { session } = useAuth();
+  const userId = session?.user.id;
 
   const [table, setTable] = useState<TableRow | null>(null);
   const [records, setRecords] = useState<TableRecord[]>([]);
@@ -86,27 +92,59 @@ export default function TableMenu() {
   const [entryNames, setEntryNames] = useState<string[]>([]);
   const [isPublic, setIsPublic] = useState(false);
 
+  const applyTable = (freshTable: TableRow) => {
+    setTable(freshTable);
+    setTableName(freshTable.table_name ?? "");
+    setTableDescription(freshTable.table_description ?? "");
+    setEntryUnit(freshTable.entry_unit ?? "");
+    setEntryNames(freshTable.record_entry_names?.split(",") ?? []);
+    setIsPublic(!!freshTable.is_public);
+  };
+
+  const applyRecords = useCallback(
+    (allRecords: Record<string, TableRecord>) => {
+      setRecords(
+        Object.values(allRecords)
+          .filter((r) => r.table_id === id && r.has_data)
+          .sort((a, b) => b.created_at - a.created_at)
+      );
+    },
+    [id]
+  );
+
   const load = useCallback(async () => {
-    if (!id) return;
+    if (!id || !userId) return;
     try {
-      const [freshTable, freshRecords] = await Promise.all([
-        fetchTable(id),
-        fetchRecords(id),
+      // Instant paint from whatever's already known locally.
+      const [localTable, localRecords] = await Promise.all([
+        getLocalTable(userId, id),
+        getLocalRecords(userId),
       ]);
-      setTable(freshTable);
-      setRecords(freshRecords.filter((r) => r.has_data));
-      setTableName(freshTable.table_name ?? "");
-      setTableDescription(freshTable.table_description ?? "");
-      setEntryUnit(freshTable.entry_unit ?? "");
-      setEntryNames(freshTable.record_entry_names?.split(",") ?? []);
-      setIsPublic(!!freshTable.is_public);
+      if (localTable) {
+        applyTable(localTable);
+        applyRecords(localRecords);
+        setIsLoading(false);
+      }
+
+      await flushOutbox(userId);
+      await Promise.all([fetchTable(userId, id), fetchRecords(userId, id)]);
+
+      // Re-read from the local store rather than the raw fetch results —
+      // fetchTable/fetchRecords skip overwriting rows with an unsynced local
+      // edit pending, so the local store is the correct LWW-resolved view.
+      const [reconciledTable, reconciledRecords] = await Promise.all([
+        getLocalTable(userId, id),
+        getLocalRecords(userId),
+      ]);
+      if (reconciledTable) applyTable(reconciledTable);
+      applyRecords(reconciledRecords);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load table");
     } finally {
       setIsLoading(false);
     }
-  }, [id]);
+  }, [id, userId, applyRecords]);
 
   useFocusEffect(
     useCallback(() => {
@@ -140,10 +178,10 @@ export default function TableMenu() {
   };
 
   const handleSave = async () => {
-    if (!table || tableName.trim().length === 0) return;
+    if (!table || !userId || tableName.trim().length === 0) return;
     setIsSaving(true);
     try {
-      const updated = await updateTable(table.table_id, {
+      const updated = await updateTable(userId, table.table_id, {
         table_name: tableName.trim(),
         table_description: tableDescription.trim() ? tableDescription.trim() : null,
         entry_unit:
@@ -160,7 +198,7 @@ export default function TableMenu() {
   };
 
   const handleDelete = () => {
-    if (!table) return;
+    if (!table || !userId) return;
     Alert.alert(
       "Delete table",
       `Delete "${table.table_name ?? "this table"}" and all of its records? This can't be undone.`,
@@ -171,7 +209,7 @@ export default function TableMenu() {
           style: "destructive",
           onPress: async () => {
             try {
-              await deleteTable(table.table_id);
+              await deleteTable(userId, table.table_id);
               router.back();
             } catch (err) {
               Alert.alert("Error", err instanceof Error ? err.message : "Failed to delete table");
@@ -183,9 +221,9 @@ export default function TableMenu() {
   };
 
   const handleCreateRecord = async () => {
-    if (!table) return;
+    if (!table || !userId) return;
     try {
-      const created = await createNewRecord(table, records[0] ?? null);
+      const created = await createNewRecord(userId, table);
       router.push(`/table/${table.table_id}/record/${created.record_id}`);
     } catch (err) {
       Alert.alert("Error", err instanceof Error ? err.message : "Failed to create record");
@@ -213,32 +251,35 @@ export default function TableMenu() {
       <Stack.Screen
         options={{
           title: table.table_name ?? "Table",
-          headerRight: () => (
-            <Pressable onPress={handleSave} disabled={!isDirty || isSaving} hitSlop={8}>
-              <Text
-                style={[
-                  styles.headerButtonText,
-                  styles.headerButtonStrong,
-                  (!isDirty || isSaving) && styles.headerButtonDisabled,
-                ]}
-              >
-                Save
-              </Text>
-            </Pressable>
-          ),
-          unstable_headerRightItems: () => [
-            {
-              type: "button",
-              label: "Save",
-              variant: "plain",
-              hidesSharedBackground: true,
-              tintColor: "#208AEF",
-              disabled: !isDirty || isSaving,
-              onPress: () => handleSave(),
-            },
-          ],
+          ...(Platform.OS !== "ios" && {
+            headerRight: () => (
+              <Pressable onPress={handleSave} disabled={!isDirty || isSaving} hitSlop={8}>
+                <Text
+                  style={[
+                    styles.headerButtonText,
+                    styles.headerButtonStrong,
+                    (!isDirty || isSaving) && styles.headerButtonDisabled,
+                  ]}
+                >
+                  Save
+                </Text>
+              </Pressable>
+            ),
+          }),
         }}
       />
+      {Platform.OS === "ios" && (
+        <Stack.Toolbar placement="right">
+          <Stack.Toolbar.Button
+            variant="plain"
+            tintColor="#208AEF"
+            disabled={!isDirty || isSaving}
+            onPress={() => handleSave()}
+          >
+            Save
+          </Stack.Toolbar.Button>
+        </Stack.Toolbar>
+      )}
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <Section label="Name">
           <TextInput
