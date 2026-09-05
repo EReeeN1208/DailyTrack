@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 
+import { useTheme } from "@/context/theme";
 import {
   createNewRecord,
   draftRecord,
@@ -68,6 +69,7 @@ export function TableCard({
   recordCount: number;
   onMutate: (tableId: string, record: TableRecord) => void;
 }) {
+  const { colors } = useTheme();
   const [isBusy, setIsBusy] = useState(false);
 
   const isDaily = table.record_frequency === "daily";
@@ -129,10 +131,10 @@ export function TableCard({
   };
 
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, { backgroundColor: colors.card }]}>
       <Pressable onPress={() => router.push(`/table/${table.table_id}`)}>
         <View style={styles.titleRow}>
-          <Text style={styles.cardTitle} numberOfLines={1}>
+          <Text style={[styles.cardTitle, { color: colors.text }]} numberOfLines={1}>
             {table.table_name ?? "Untitled table"}
           </Text>
           <Text style={styles.recordCount}>
@@ -154,6 +156,7 @@ export function TableCard({
       <RecordPreview
         table={table}
         record={displayRecord}
+        colors={colors}
         isBusy={isBusy}
         onOpenRecord={openRecord}
         onCreateRecord={createRecord}
@@ -174,6 +177,7 @@ export function TableCard({
 function RecordPreview({
   table,
   record,
+  colors,
   isBusy,
   onOpenRecord,
   onCreateRecord,
@@ -185,6 +189,7 @@ function RecordPreview({
 }: {
   table: TableRow;
   record: TableRecord | null;
+  colors: Record<string, string>;
   isBusy: boolean;
   onOpenRecord: () => void;
   onCreateRecord: () => void;
@@ -222,7 +227,7 @@ function RecordPreview({
                 {count > 1 && (
                   <Text style={styles.entryLabel}>{getEntryLabel(table, entryIndex)}</Text>
                 )}
-                <Text style={styles.previewValue} numberOfLines={2}>
+                <Text style={[styles.previewValue, { color: colors.text }]} numberOfLines={2}>
                   {value || "Tap to add"}
                 </Text>
               </View>
@@ -234,7 +239,7 @@ function RecordPreview({
       const filled = record.data.filter((v) => typeof v === "string" && v.length > 0).length;
       content = (
         <Pressable onPress={onOpenRecord} disabled={isBusy} style={styles.entryCard}>
-          <Text style={styles.previewValue}>
+          <Text style={[styles.previewValue, { color: colors.text }]}>
             {filled}/{count} logged
           </Text>
         </Pressable>
@@ -245,7 +250,7 @@ function RecordPreview({
     content = (
       <View style={[styles.entryCard, styles.previewInlineRow]}>
         <Pressable onPress={onOpenRecord} disabled={isBusy}>
-          <Text style={styles.previewValue}>
+          <Text style={[styles.previewValue, { color: colors.text }]}>
             {value != null
               ? `${value}${table.entry_unit ? ` ${table.entry_unit}` : ""}`
               : "Tap to add"}
@@ -277,7 +282,9 @@ function RecordPreview({
                   <Text style={styles.entryLabel}>{getEntryLabel(table, entryIndex)}</Text>
                 )}
                 <View style={styles.timerRow}>
-                  <Text style={styles.previewValue}>{formatDuration(seconds)}</Text>
+                  <Text style={[styles.previewValue, { color: colors.text }]}>
+                    {formatDuration(seconds)}
+                  </Text>
                   <View style={styles.timerButtonGroup}>
                     <Pressable
                       onPress={() => onResetTimer(entryIndex)}
@@ -285,7 +292,7 @@ function RecordPreview({
                       hitSlop={8}
                       style={[styles.timerButton, !canReset && styles.timerButtonDisabled]}
                     >
-                      <Text style={styles.timerButtonText}>Reset</Text>
+                      <Text style={[styles.timerButtonText, { color: colors.text }]}>Reset</Text>
                     </Pressable>
                     <Pressable
                       onPress={() =>
@@ -295,7 +302,7 @@ function RecordPreview({
                       hitSlop={8}
                       style={[styles.timerButton, entry?.running && styles.timerButtonActive]}
                     >
-                      <Text style={styles.timerButtonText}>
+                      <Text style={[styles.timerButtonText, { color: colors.text }]}>
                         {entry?.running ? "Stop" : "Start"}
                       </Text>
                     </Pressable>
@@ -313,7 +320,7 @@ function RecordPreview({
       );
       content = (
         <Pressable onPress={onOpenRecord} disabled={isBusy} style={styles.entryCard}>
-          <Text style={styles.previewValue}>
+          <Text style={[styles.previewValue, { color: colors.text }]}>
             {formatDuration(total)} total — tap to view timers
           </Text>
         </Pressable>
@@ -339,7 +346,10 @@ function RecordPreview({
                       {ticked ? "✓" : entryIndex + 1}
                     </Text>
                   </View>
-                  <Text style={styles.checkpointLabel} numberOfLines={1}>
+                  <Text
+                    style={[styles.checkpointLabel, { color: colors.text }]}
+                    numberOfLines={1}
+                  >
                     {getEntryLabel(table, entryIndex)}
                   </Text>
                 </View>
@@ -355,7 +365,7 @@ function RecordPreview({
       const done = record.data.filter((v) => v != null).length;
       content = (
         <Pressable onPress={onOpenRecord} disabled={isBusy} style={styles.entryCard}>
-          <Text style={styles.previewValue}>
+          <Text style={[styles.previewValue, { color: colors.text }]}>
             {done}/{count} logged
           </Text>
         </Pressable>

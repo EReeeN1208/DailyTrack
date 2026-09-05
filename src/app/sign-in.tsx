@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
-import { Appearance, Pressable, StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import Svg, { Path } from "react-native-svg";
 
 import { useAuth } from "@/context/auth";
+import { useTheme } from "@/context/theme";
 
 function GoogleLogo({ size = 20 }: { size?: number }) {
   return (
@@ -29,19 +30,9 @@ function GoogleLogo({ size = 20 }: { size?: number }) {
 
 export default function SignIn() {
   const { signInWithGoogle } = useAuth();
+  const { colorScheme } = useTheme();
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const [colorScheme, setColorScheme] = useState<"light" | "dark">(() =>
-    Appearance.getColorScheme() === "dark" ? "dark" : "light"
-  );
-
-  useEffect(() => {
-    const subscription = Appearance.addChangeListener(({ colorScheme: scheme }) => {
-      setColorScheme(scheme === "dark" ? "dark" : "light");
-    });
-    return () => subscription.remove();
-  }, []);
 
   const isDark = colorScheme === "dark";
 

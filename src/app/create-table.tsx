@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
   Animated,
-  Appearance,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -17,16 +15,17 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Stack, router, useFocusEffect } from "expo-router";
 
 import { useAuth } from "@/context/auth";
-import { readCache, writeCache } from "@/lib/cache";
-import {
-  createTable,
-  fetchEnumValues,
-  type EntryFrequency,
-  type EntryType,
-} from "@/lib/tables";
+import { useTheme } from "@/context/theme";
+import { createTable, type EntryFrequency, type EntryType } from "@/lib/tables";
 
-const ENTRY_TYPE_CACHE_KEY = "dailytrack:cache:entry_type_options";
-const ENTRY_FREQUENCY_CACHE_KEY = "dailytrack:cache:entry_frequency_options";
+// Fixed, compile-time-known sets — not fetched from the DB. These mirror the
+// EntryType/EntryFrequency union types exactly (and the label maps below),
+// so a network round-trip bought no real safety net: a backend enum change
+// would need this file updated regardless. Fetching them was also the
+// source of a real bug — a bad/empty response got cached and then kept
+// reappearing (with no fields to pick) on every later visit that session.
+const ENTRY_TYPE_OPTIONS: EntryType[] = ["string", "numerical", "duration", "timestamp"];
+const ENTRY_FREQUENCY_OPTIONS: EntryFrequency[] = ["daily", "aperiodic"];
 
 const ENTRY_TYPE_LABEL: Record<string, string> = {
   string: "Text",
@@ -133,32 +132,27 @@ export default function CreateTable() {
     }, [])
   );
 
-  const [colorScheme, setColorScheme] = useState<"light" | "dark">(() =>
-    Appearance.getColorScheme() === "dark" ? "dark" : "light"
-  );
-
+  // The ScrollView's very first mount, while the formSheet is still
+  // animating in, sometimes ends up with its content rendered but
+  // invisible (confirmed on-device: a plain View never has this problem,
+  // and forcing a second ScrollView instance always fixes it). Remounting
+  // it once, shortly after the sheet has settled, works around this
+  // reliably. Native issue, not fixable from here.
+  const [scrollViewSettled, setScrollViewSettled] = useState(false);
   useEffect(() => {
-    const subscription = Appearance.addChangeListener(({ colorScheme: scheme }) => {
-      setColorScheme(scheme === "dark" ? "dark" : "light");
-    });
-    return () => subscription.remove();
+    const timer = setTimeout(() => setScrollViewSettled(true), 500);
+    return () => clearTimeout(timer);
   }, []);
 
-  const textColor = colorScheme === "dark" ? "#FFFFFF" : "#000000";
-  const backgroundColor = colorScheme === "dark" ? "#000000" : "#FFFFFF";
-
-  const [entryTypeOptions, setEntryTypeOptions] = useState<EntryType[]>([]);
-  const [entryFrequencyOptions, setEntryFrequencyOptions] = useState<
-    EntryFrequency[]
-  >([]);
-  const [isLoadingOptions, setIsLoadingOptions] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const { colorScheme, colors } = useTheme();
+  const textColor = colors.text;
+  const backgroundColor = colors.background;
 
   const [tableName, setTableName] = useState("");
-  const [entryType, setEntryType] = useState<EntryType | null>(null);
+  const [entryType, setEntryType] = useState<EntryType | null>(ENTRY_TYPE_OPTIONS[0]);
   const [entryUnit, setEntryUnit] = useState("");
   const [entryFrequency, setEntryFrequency] = useState<EntryFrequency | null>(
-    null
+    ENTRY_FREQUENCY_OPTIONS[0]
   );
   const [entryDataCount, setEntryDataCount] = useState("1");
   const [entryNames, setEntryNames] = useState<string[]>([]);
@@ -201,47 +195,6 @@ export default function CreateTable() {
   const countInvalid = !Number.isInteger(parsedCount) || parsedCount < minCount;
   const isFormValid =
     !nameMissing && !entryTypeMissing && !entryFrequencyMissing && !countInvalid;
-
-  useEffect(() => {
-    (async () => {
-      // Hydrate instantly from the on-device cache so the form is usable
-      // offline, before the network round-trip below even has a chance to run.
-      const [cachedTypes, cachedFrequencies] = await Promise.all([
-        readCache<EntryType[]>(ENTRY_TYPE_CACHE_KEY),
-        readCache<EntryFrequency[]>(ENTRY_FREQUENCY_CACHE_KEY),
-      ]);
-      if (cachedTypes?.length && cachedFrequencies?.length) {
-        setEntryTypeOptions(cachedTypes);
-        setEntryFrequencyOptions(cachedFrequencies);
-        setEntryType(cachedTypes[0]);
-        setEntryFrequency(cachedFrequencies[0]);
-        setIsLoadingOptions(false);
-      }
-
-      try {
-        const [types, frequencies] = await Promise.all([
-          fetchEnumValues("entry_type"),
-          fetchEnumValues("entry_frequency"),
-        ]);
-        setEntryTypeOptions(types as EntryType[]);
-        setEntryFrequencyOptions(frequencies as EntryFrequency[]);
-        setEntryType((types[0] as EntryType) ?? null);
-        setEntryFrequency((frequencies[0] as EntryFrequency) ?? null);
-        writeCache(ENTRY_TYPE_CACHE_KEY, types);
-        writeCache(ENTRY_FREQUENCY_CACHE_KEY, frequencies);
-      } catch (err) {
-        // Offline or the request failed — fall back to the cached options
-        // hydrated above; only surface a hard error when there's no cache.
-        if (!cachedTypes?.length || !cachedFrequencies?.length) {
-          setLoadError(
-            err instanceof Error ? err.message : "Failed to load form options"
-          );
-        }
-      } finally {
-        setIsLoadingOptions(false);
-      }
-    })();
-  }, []);
 
   const handleEntryTypeChange = (value: EntryType) => {
     setEntryType(value);
@@ -314,16 +267,12 @@ export default function CreateTable() {
               </Pressable>
             ),
             headerRight: () => (
-              <Pressable
-                onPress={handleCreate}
-                disabled={isSubmitting || isLoadingOptions}
-                hitSlop={8}
-              >
+              <Pressable onPress={handleCreate} disabled={isSubmitting} hitSlop={8}>
                 <Text
                   style={[
                     styles.headerButtonText,
                     styles.headerButtonStrong,
-                    (isSubmitting || isLoadingOptions) && styles.headerButtonDisabled,
+                    isSubmitting && styles.headerButtonDisabled,
                   ]}
                 >
                   Create
@@ -344,7 +293,7 @@ export default function CreateTable() {
             <Stack.Toolbar.Button
               variant="plain"
               tintColor="#208AEF"
-              disabled={isSubmitting || isLoadingOptions}
+              disabled={isSubmitting}
               onPress={() => handleCreate()}
             >
               Create
@@ -353,173 +302,164 @@ export default function CreateTable() {
         </>
       )}
 
-      {isLoadingOptions ? (
-        <View style={styles.centered}>
-          <ActivityIndicator />
-        </View>
-      ) : loadError ? (
-        <View style={styles.centered}>
-          <Text style={styles.error}>{loadError}</Text>
-        </View>
-      ) : (
-        <ScrollView
-          ref={scrollRef}
-          style={styles.scroll}
-          contentContainerStyle={{ paddingTop: 60, paddingBottom: insets.bottom + 24 }}
-          keyboardShouldPersistTaps="handled"
+      <ScrollView
+        key={scrollViewSettled ? "settled" : "initial"}
+        ref={scrollRef}
+        style={styles.scroll}
+        contentContainerStyle={{ paddingTop: 60, paddingBottom: insets.bottom + 24 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Section
+          label="Name"
+          required={hasAttemptedSubmit && nameMissing}
+          textColor={textColor}
         >
-          <Section
-            label="Name"
-            required={hasAttemptedSubmit && nameMissing}
-            textColor={textColor}
-          >
-            <TextInput
-              placeholder="e.g. Water intake"
-              placeholderTextColor="#8E8E93"
-              value={tableName}
-              onChangeText={setTableName}
-              autoCapitalize="words"
-              style={[styles.textInput, { color: textColor }]}
-            />
-          </Section>
+          <TextInput
+            placeholder="e.g. Water intake"
+            placeholderTextColor="#8E8E93"
+            value={tableName}
+            onChangeText={setTableName}
+            autoCapitalize="words"
+            style={[styles.textInput, { color: textColor }]}
+          />
+        </Section>
 
-          <Section
-            label="Entry Type"
-            required={hasAttemptedSubmit && entryTypeMissing}
+        <Section
+          label="Entry Type"
+          required={hasAttemptedSubmit && entryTypeMissing}
+          textColor={textColor}
+        >
+          <ChoiceChips
+            options={ENTRY_TYPE_OPTIONS}
+            value={entryType}
+            labels={ENTRY_TYPE_LABEL}
+            onChange={handleEntryTypeChange}
             textColor={textColor}
-          >
-            <ChoiceChips
-              options={entryTypeOptions}
-              value={entryType}
-              labels={ENTRY_TYPE_LABEL}
-              onChange={handleEntryTypeChange}
-              textColor={textColor}
-            />
-          </Section>
+          />
+        </Section>
 
-          <Section
-            label="Unit"
+        <Section
+          label="Unit"
+          textColor={textColor}
+          footer={
+            entryType === "duration"
+              ? "Duration is always recorded in hours/minutes/seconds."
+              : undefined
+          }
+        >
+          <TextInput
+            placeholder="Optional, e.g. kg, minutes"
+            placeholderTextColor="#8E8E93"
+            value={entryType === "duration" ? "" : entryUnit}
+            onChangeText={setEntryUnit}
+            autoCapitalize="none"
+            editable={entryType !== "duration"}
+            style={[
+              styles.textInput,
+              { color: entryType === "duration" ? "#8E8E93" : textColor },
+            ]}
+          />
+        </Section>
+
+        <Section label="Description" textColor={textColor}>
+          <TextInput
+            placeholder="Instructions etc..."
+            placeholderTextColor="#8E8E93"
+            value={tableDescription}
+            onChangeText={setTableDescription}
+            multiline
+            numberOfLines={3}
+            style={[styles.textInput, styles.multilineInput, { color: textColor }]}
+          />
+        </Section>
+
+        <Section
+          label="Increment"
+          textColor={textColor}
+          footer={
+            entryType === "duration"
+              ? "Duration entries are always incremental — start/stop keeps adding to the running total."
+              : entryType === "numerical"
+                ? "Enable incrementation on top of most recent entry"
+                : "Only available for numerical and duration tables."
+          }
+        >
+          <View style={styles.switchRow}>
+            <Text style={[styles.switchLabel, { color: textColor }]}>
+              Incremental
+            </Text>
+            <Switch
+              value={incrementalLock(entryType) ?? isIncremental}
+              onValueChange={setIsIncremental}
+              disabled={incrementalLock(entryType) !== null}
+            />
+          </View>
+        </Section>
+
+        <Section
+          label="Frequency"
+          required={hasAttemptedSubmit && entryFrequencyMissing}
+          textColor={textColor}
+        >
+          <ChoiceChips
+            options={ENTRY_FREQUENCY_OPTIONS}
+            value={entryFrequency}
+            labels={ENTRY_FREQUENCY_LABEL}
+            onChange={setEntryFrequency}
             textColor={textColor}
-            footer={
-              entryType === "duration"
-                ? "Duration is always recorded in hours/minutes/seconds."
-                : undefined
-            }
-          >
-            <TextInput
-              placeholder="Optional, e.g. kg, minutes"
-              placeholderTextColor="#8E8E93"
-              value={entryType === "duration" ? "" : entryUnit}
-              onChangeText={setEntryUnit}
-              autoCapitalize="none"
-              editable={entryType !== "duration"}
-              style={[
-                styles.textInput,
-                { color: entryType === "duration" ? "#8E8E93" : textColor },
-              ]}
-            />
-          </Section>
+          />
+        </Section>
 
-          <Section label="Description" textColor={textColor}>
-            <TextInput
-              placeholder="Instructions etc..."
-              placeholderTextColor="#8E8E93"
-              value={tableDescription}
-              onChangeText={setTableDescription}
-              multiline
-              numberOfLines={3}
-              style={[styles.textInput, styles.multilineInput, { color: textColor }]}
-            />
-          </Section>
+        <Section
+          label="Entries per record"
+          required={hasAttemptedSubmit && countInvalid}
+          textColor={textColor}
+          footer={
+            entryType === "timestamp"
+              ? "Timestamp tables need at least 2 entries per record."
+              : "Minimum of 1 entry per record."
+          }
+        >
+          <TextInput
+            placeholder="1"
+            placeholderTextColor="#8E8E93"
+            value={entryDataCount}
+            onChangeText={setEntryDataCount}
+            keyboardType="number-pad"
+            style={[styles.textInput, { color: textColor }]}
+          />
+        </Section>
 
+        {parsedCount > 1 && (
           <Section
-            label="Increment"
+            label="Entry names"
             textColor={textColor}
-            footer={
-              entryType === "duration"
-                ? "Duration entries are always incremental — start/stop keeps adding to the running total."
-                : entryType === "numerical"
-                  ? "Enable incrementation on top of most recent entry"
-                  : "Only available for numerical and duration tables."
-            }
+            footer="Optional. Names each entry within a record, e.g. 'Wake up', 'Lunch'. Commas aren't allowed."
           >
-            <View style={styles.switchRow}>
-              <Text style={[styles.switchLabel, { color: textColor }]}>
-                Incremental
-              </Text>
-              <Switch
-                value={incrementalLock(entryType) ?? isIncremental}
-                onValueChange={setIsIncremental}
-                disabled={incrementalLock(entryType) !== null}
-              />
+            <View style={styles.entryNameList}>
+              {Array.from({ length: parsedCount }, (_, i) => i).map((i) => (
+                <TextInput
+                  key={i}
+                  placeholder={`Entry ${i + 1}`}
+                  placeholderTextColor="#8E8E93"
+                  value={entryNames[i] ?? ""}
+                  onChangeText={(text) => handleEntryNameChange(i, text)}
+                  style={[styles.textInput, styles.entryNameInput, { color: textColor }]}
+                />
+              ))}
             </View>
           </Section>
+        )}
 
-          <Section
-            label="Frequency"
-            required={hasAttemptedSubmit && entryFrequencyMissing}
-            textColor={textColor}
-          >
-            <ChoiceChips
-              options={entryFrequencyOptions}
-              value={entryFrequency}
-              labels={ENTRY_FREQUENCY_LABEL}
-              onChange={setEntryFrequency}
-              textColor={textColor}
-            />
-          </Section>
-
-          <Section
-            label="Entries per record"
-            required={hasAttemptedSubmit && countInvalid}
-            textColor={textColor}
-            footer={
-              entryType === "timestamp"
-                ? "Timestamp tables need at least 2 entries per record."
-                : "Minimum of 1 entry per record."
-            }
-          >
-            <TextInput
-              placeholder="1"
-              placeholderTextColor="#8E8E93"
-              value={entryDataCount}
-              onChangeText={setEntryDataCount}
-              keyboardType="number-pad"
-              style={[styles.textInput, { color: textColor }]}
-            />
-          </Section>
-
-          {parsedCount > 1 && (
-            <Section
-              label="Entry names"
-              textColor={textColor}
-              footer="Optional. Names each entry within a record, e.g. 'Wake up', 'Lunch'. Commas aren't allowed."
-            >
-              <View style={styles.entryNameList}>
-                {Array.from({ length: parsedCount }, (_, i) => i).map((i) => (
-                  <TextInput
-                    key={i}
-                    placeholder={`Entry ${i + 1}`}
-                    placeholderTextColor="#8E8E93"
-                    value={entryNames[i] ?? ""}
-                    onChangeText={(text) => handleEntryNameChange(i, text)}
-                    style={[styles.textInput, styles.entryNameInput, { color: textColor }]}
-                  />
-                ))}
-              </View>
-            </Section>
-          )}
-
-          <Section label="Visibility" textColor={textColor}>
-            <View style={styles.switchRow}>
-              <Text style={[styles.switchLabel, { color: textColor }]}>
-                Public
-              </Text>
-              <Switch value={isPublic} onValueChange={setIsPublic} />
-            </View>
-          </Section>
-        </ScrollView>
-      )}
+        <Section label="Visibility" textColor={textColor}>
+          <View style={styles.switchRow}>
+            <Text style={[styles.switchLabel, { color: textColor }]}>
+              Public
+            </Text>
+            <Switch value={isPublic} onValueChange={setIsPublic} />
+          </View>
+        </Section>
+      </ScrollView>
 
       {formError && (
         <Animated.View
@@ -558,8 +498,6 @@ export default function CreateTable() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   scroll: { flex: 1 },
-  centered: { flex: 1, alignItems: "center", justifyContent: "center" },
-  error: { color: "#FF3B30" },
   headerButtonText: { fontSize: 15, color: "#208AEF" },
   headerButtonStrong: { fontWeight: "600" },
   headerButtonDisabled: { opacity: 0.4 },

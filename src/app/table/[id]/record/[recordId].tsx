@@ -13,6 +13,7 @@ import {
 import { Stack, router, useFocusEffect, useLocalSearchParams } from "expo-router";
 
 import { useAuth } from "@/context/auth";
+import { useTheme } from "@/context/theme";
 import {
   deleteRecord,
   fetchRecord,
@@ -65,10 +66,18 @@ function reportError(err: unknown) {
   Alert.alert("Error", err instanceof Error ? err.message : "Something went wrong");
 }
 
-function EntryField({ label, children }: { label: string; children: React.ReactNode }) {
+function EntryField({
+  label,
+  colors,
+  children,
+}: {
+  label: string;
+  colors: Record<string, string>;
+  children: React.ReactNode;
+}) {
   return (
     <View style={styles.entryField}>
-      <Text style={styles.entryFieldLabel}>{label}</Text>
+      <Text style={[styles.entryFieldLabel, { color: colors.secondaryText }]}>{label}</Text>
       {children}
     </View>
   );
@@ -77,6 +86,7 @@ function EntryField({ label, children }: { label: string; children: React.ReactN
 export default function RecordEdit() {
   const { id, recordId } = useLocalSearchParams<{ id: string; recordId: string }>();
   const { session } = useAuth();
+  const { colors } = useTheme();
   const userId = session?.user.id;
 
   const [table, setTable] = useState<TableRow | null>(null);
@@ -280,7 +290,7 @@ export default function RecordEdit() {
 
   if (isLoading) {
     return (
-      <View style={styles.centered}>
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
         <ActivityIndicator />
       </View>
     );
@@ -288,7 +298,7 @@ export default function RecordEdit() {
 
   if (error || !table || !record) {
     return (
-      <View style={styles.centered}>
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
         <Text style={styles.error}>{error ?? "Record not found"}</Text>
       </View>
     );
@@ -298,7 +308,7 @@ export default function RecordEdit() {
   const entryIndexes = Array.from({ length: count }, (_, i) => i);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <Stack.Screen
         options={{
           title: table.table_name ?? "Record",
@@ -324,7 +334,7 @@ export default function RecordEdit() {
 
           if (table.entry_type === "string") {
             return (
-              <EntryField key={entryIndex} label={label}>
+              <EntryField key={entryIndex} label={label} colors={colors}>
                 <TextInput
                   value={textValues[entryIndex] ?? ""}
                   onChangeText={(text) =>
@@ -336,7 +346,11 @@ export default function RecordEdit() {
                   }
                   onBlur={() => handleTextBlur(entryIndex)}
                   multiline
-                  style={[styles.textInput, styles.multilineInput]}
+                  style={[
+                    styles.textInput,
+                    styles.multilineInput,
+                    { backgroundColor: colors.card, color: colors.text },
+                  ]}
                 />
               </EntryField>
             );
@@ -344,7 +358,7 @@ export default function RecordEdit() {
 
           if (table.entry_type === "numerical") {
             return (
-              <EntryField key={entryIndex} label={label}>
+              <EntryField key={entryIndex} label={label} colors={colors}>
                 <View style={styles.numericRow}>
                   <TextInput
                     value={textValues[entryIndex] ?? ""}
@@ -357,9 +371,17 @@ export default function RecordEdit() {
                     }
                     onBlur={() => handleTextBlur(entryIndex)}
                     keyboardType="decimal-pad"
-                    style={[styles.textInput, styles.numericInput]}
+                    style={[
+                      styles.textInput,
+                      styles.numericInput,
+                      { backgroundColor: colors.card, color: colors.text },
+                    ]}
                   />
-                  {table.entry_unit && <Text style={styles.unitText}>{table.entry_unit}</Text>}
+                  {table.entry_unit && (
+                    <Text style={[styles.unitText, { color: colors.secondaryText }]}>
+                      {table.entry_unit}
+                    </Text>
+                  )}
                   {table.is_incremental && (
                     <Pressable
                       onPress={() => handleIncrement(entryIndex, 1)}
@@ -379,9 +401,11 @@ export default function RecordEdit() {
             const seconds = entryElapsedSeconds(entry);
             const canReset = !!entry?.running || seconds > 0;
             return (
-              <EntryField key={entryIndex} label={label}>
-                <View style={styles.timerRow}>
-                  <Text style={styles.timerValue}>{formatDuration(seconds)}</Text>
+              <EntryField key={entryIndex} label={label} colors={colors}>
+                <View style={[styles.timerRow, { backgroundColor: colors.card }]}>
+                  <Text style={[styles.timerValue, { color: colors.text }]}>
+                    {formatDuration(seconds)}
+                  </Text>
                   <View style={styles.timerButtonGroup}>
                     <Pressable
                       onPress={() => handleResetTimer(entryIndex)}
@@ -409,9 +433,9 @@ export default function RecordEdit() {
             const value = record.data[entryIndex];
             const ticked = value != null;
             return (
-              <EntryField key={entryIndex} label={label}>
-                <View style={styles.timestampRow}>
-                  <Text style={styles.timestampValue}>
+              <EntryField key={entryIndex} label={label} colors={colors}>
+                <View style={[styles.timestampRow, { backgroundColor: colors.card }]}>
+                  <Text style={[styles.timestampValue, { color: colors.text }]}>
                     {ticked ? new Date(value as number).toLocaleString() : "Not yet"}
                   </Text>
                   <Pressable

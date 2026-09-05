@@ -9,9 +9,10 @@ import {
   Text,
   View,
 } from "react-native";
-import { Link, Stack, router, useFocusEffect } from "expo-router";
+import { Stack, router, useFocusEffect } from "expo-router";
 
 import { useAuth } from "@/context/auth";
+import { useTheme } from "@/context/theme";
 import { readCache, writeCache } from "@/lib/cache";
 import { fetchLatestRecords, fetchRecordCounts, type TableRecord } from "@/lib/entries";
 import { getLocalRecords, getLocalTables } from "@/lib/localStore";
@@ -57,7 +58,8 @@ function SyncIndicator({ status }: { status: SyncStatus }) {
 }
 
 export default function Index() {
-  const { signOut, session } = useAuth();
+  const { session } = useAuth();
+  const { colors } = useTheme();
   const userId = session?.user.id;
   const recordCountsCacheKey = userId ? `${RECORD_COUNTS_CACHE_KEY_PREFIX}:${userId}` : null;
 
@@ -71,6 +73,23 @@ export default function Index() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const hasTablesRef = useRef(false);
+  // Guards against a fast double-tap pushing two stacked instances of the
+  // create-table formSheet before the first one has finished presenting —
+  // react-native-screens can render the second one with a blank/frozen
+  // content view when that happens.
+  const isOpeningCreateTableRef = useRef(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      isOpeningCreateTableRef.current = false;
+    }, [])
+  );
+
+  const openCreateTable = useCallback(() => {
+    if (isOpeningCreateTableRef.current) return;
+    isOpeningCreateTableRef.current = true;
+    router.push("/create-table");
+  }, []);
 
   useEffect(() => {
     hasTablesRef.current = tables.length > 0;
@@ -183,7 +202,7 @@ export default function Index() {
   );
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <Stack.Screen
         options={{
           title: "Tables",
@@ -193,16 +212,14 @@ export default function Index() {
           // doesn't have that bubble, so it keeps the plain JS buttons.
           ...(Platform.OS !== "ios" && {
             headerLeft: () => (
-              <Pressable onPress={() => signOut()} hitSlop={8}>
-                <Text style={styles.headerButtonText}>Sign out</Text>
+              <Pressable onPress={() => router.push("/settings")} hitSlop={8}>
+                <Text style={styles.headerButtonText}>Settings</Text>
               </Pressable>
             ),
             headerRight: () => (
-              <Link href="/create-table" asChild>
-                <Pressable hitSlop={8}>
-                  <Text style={styles.plus}>+</Text>
-                </Pressable>
-              </Link>
+              <Pressable onPress={openCreateTable} hitSlop={8}>
+                <Text style={styles.plus}>+</Text>
+              </Pressable>
             ),
           }),
         }}
@@ -210,8 +227,12 @@ export default function Index() {
       {Platform.OS === "ios" && (
         <>
           <Stack.Toolbar placement="left">
-            <Stack.Toolbar.Button variant="plain" tintColor="#208AEF" onPress={() => signOut()}>
-              Sign out
+            <Stack.Toolbar.Button
+              variant="plain"
+              tintColor="#208AEF"
+              onPress={() => router.push("/settings")}
+            >
+              Settings
             </Stack.Toolbar.Button>
           </Stack.Toolbar>
           <Stack.Toolbar placement="right">
@@ -220,7 +241,7 @@ export default function Index() {
               tintColor="#208AEF"
               hidesSharedBackground
               style={styles.toolbarPlus}
-              onPress={() => router.push("/create-table")}
+              onPress={openCreateTable}
             >
               +
             </Stack.Toolbar.Button>
@@ -251,7 +272,7 @@ export default function Index() {
           }
           ListEmptyComponent={
             <View style={styles.centered}>
-              <Text style={styles.emptyText}>No tables yet</Text>
+              <Text style={[styles.emptyText, { color: colors.text }]}>No tables yet</Text>
               <Text style={styles.emptySubtext}>
                 Tap + to create your first table.
               </Text>

@@ -14,6 +14,7 @@ import {
 import { Stack, router, useFocusEffect, useLocalSearchParams } from "expo-router";
 
 import { useAuth } from "@/context/auth";
+import { useTheme } from "@/context/theme";
 import { formatDuration, fetchRecords, createNewRecord, type TableRecord } from "@/lib/entries";
 import { getLocalRecords, getLocalTable } from "@/lib/localStore";
 import { flushOutbox } from "@/lib/sync";
@@ -66,11 +67,19 @@ function sanitizeEntryName(text: string) {
   return text.replace(/,/g, "");
 }
 
-function Section({ label, children }: { label: string; children: React.ReactNode }) {
+function Section({
+  label,
+  colors,
+  children,
+}: {
+  label: string;
+  colors: Record<string, string>;
+  children: React.ReactNode;
+}) {
   return (
     <View style={styles.section}>
-      <Text style={styles.sectionLabel}>{label}</Text>
-      <View style={styles.card}>{children}</View>
+      <Text style={[styles.sectionLabel, { color: colors.secondaryText }]}>{label}</Text>
+      <View style={[styles.card, { backgroundColor: colors.card }]}>{children}</View>
     </View>
   );
 }
@@ -78,6 +87,7 @@ function Section({ label, children }: { label: string; children: React.ReactNode
 export default function TableMenu() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { session } = useAuth();
+  const { colors } = useTheme();
   const userId = session?.user.id;
 
   const [table, setTable] = useState<TableRow | null>(null);
@@ -232,7 +242,7 @@ export default function TableMenu() {
 
   if (isLoading) {
     return (
-      <View style={styles.centered}>
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
         <ActivityIndicator />
       </View>
     );
@@ -240,14 +250,14 @@ export default function TableMenu() {
 
   if (error || !table) {
     return (
-      <View style={styles.centered}>
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
         <Text style={styles.error}>{error ?? "Table not found"}</Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <Stack.Screen
         options={{
           title: table.table_name ?? "Table",
@@ -281,16 +291,16 @@ export default function TableMenu() {
         </Stack.Toolbar>
       )}
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        <Section label="Name">
+        <Section label="Name" colors={colors}>
           <TextInput
             value={tableName}
             onChangeText={setTableName}
-            style={styles.textInput}
+            style={[styles.textInput, { color: colors.text }]}
             autoCapitalize="words"
           />
         </Section>
 
-        <Section label="Description">
+        <Section label="Description" colors={colors}>
           <TextInput
             value={tableDescription}
             onChangeText={setTableDescription}
@@ -298,11 +308,11 @@ export default function TableMenu() {
             placeholderTextColor="#8E8E93"
             multiline
             numberOfLines={3}
-            style={[styles.textInput, styles.multilineInput]}
+            style={[styles.textInput, styles.multilineInput, { color: colors.text }]}
           />
         </Section>
 
-        <Section label="Unit">
+        <Section label="Unit" colors={colors}>
           <TextInput
             value={table.entry_type === "duration" ? "" : entryUnit}
             onChangeText={setEntryUnit}
@@ -314,27 +324,30 @@ export default function TableMenu() {
             placeholderTextColor="#8E8E93"
             autoCapitalize="none"
             editable={table.entry_type !== "duration"}
-            style={[styles.textInput, table.entry_type === "duration" && styles.textInputDisabled]}
+            style={[
+              styles.textInput,
+              { color: table.entry_type === "duration" ? colors.secondaryText : colors.text },
+            ]}
           />
         </Section>
 
-        <Section label="Visibility">
+        <Section label="Visibility" colors={colors}>
           <View style={styles.switchRow}>
-            <Text style={styles.switchLabel}>Public</Text>
+            <Text style={[styles.switchLabel, { color: colors.text }]}>Public</Text>
             <Switch value={isPublic} onValueChange={setIsPublic} />
           </View>
         </Section>
 
-        <Section label="Configuration">
+        <Section label="Configuration" colors={colors}>
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Entry type</Text>
-            <Text style={styles.infoValue}>
+            <Text style={[styles.infoValue, { color: colors.text }]}>
               {table.entry_type ? ENTRY_TYPE_LABEL[table.entry_type] ?? table.entry_type : "—"}
             </Text>
           </View>
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Frequency</Text>
-            <Text style={styles.infoValue}>
+            <Text style={[styles.infoValue, { color: colors.text }]}>
               {table.record_frequency
                 ? ENTRY_FREQUENCY_LABEL[table.record_frequency] ?? table.record_frequency
                 : "—"}
@@ -342,16 +355,20 @@ export default function TableMenu() {
           </View>
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Entries per record</Text>
-            <Text style={styles.infoValue}>{table.record_entry_count ?? "—"}</Text>
+            <Text style={[styles.infoValue, { color: colors.text }]}>
+              {table.record_entry_count ?? "—"}
+            </Text>
           </View>
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Incremental</Text>
-            <Text style={styles.infoValue}>{table.is_incremental ? "Yes" : "No"}</Text>
+            <Text style={[styles.infoValue, { color: colors.text }]}>
+              {table.is_incremental ? "Yes" : "No"}
+            </Text>
           </View>
         </Section>
 
         {entryCount > 1 && (
-          <Section label="Entry names">
+          <Section label="Entry names" colors={colors}>
             <View style={styles.entryNameList}>
               {Array.from({ length: entryCount }, (_, i) => i).map((i) => (
                 <TextInput
@@ -360,7 +377,7 @@ export default function TableMenu() {
                   placeholderTextColor="#8E8E93"
                   value={entryNames[i] ?? ""}
                   onChangeText={(text) => handleEntryNameChange(i, text)}
-                  style={styles.entryNameInput}
+                  style={[styles.entryNameInput, { color: colors.text }]}
                 />
               ))}
             </View>
@@ -369,7 +386,7 @@ export default function TableMenu() {
 
         <View style={styles.section}>
           <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionLabel}>Records</Text>
+            <Text style={[styles.sectionLabel, { color: colors.secondaryText }]}>Records</Text>
             {table.record_frequency === "aperiodic" && (
               <Pressable onPress={handleCreateRecord} hitSlop={8}>
                 <Text style={styles.addRecordText}>+ New record</Text>
@@ -379,7 +396,7 @@ export default function TableMenu() {
           {records.length === 0 ? (
             <Text style={styles.emptyText}>No records yet.</Text>
           ) : (
-            <View style={styles.card}>
+            <View style={[styles.card, { backgroundColor: colors.card }]}>
               {records.map((record, index) => (
                 <Pressable
                   key={record.record_id}
@@ -389,7 +406,10 @@ export default function TableMenu() {
                   <Text style={styles.recordDate}>
                     {record.record_date ?? new Date(record.created_at).toLocaleDateString()}
                   </Text>
-                  <Text style={styles.recordValue} numberOfLines={1}>
+                  <Text
+                    style={[styles.recordValue, { color: colors.text }]}
+                    numberOfLines={1}
+                  >
                     {summarizeRecord(table, record)}
                   </Text>
                 </Pressable>
@@ -435,7 +455,6 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   textInput: { fontSize: 16, padding: 0 },
-  textInputDisabled: { color: "#8E8E93" },
   multilineInput: { minHeight: 70, textAlignVertical: "top" },
   entryNameList: { gap: 10 },
   entryNameInput: {
